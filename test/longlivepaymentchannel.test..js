@@ -6,6 +6,8 @@ contract(
     // declare all global variables here
     let contractInstance;
     let contractAddress;
+    //moved from before to here so it could be accessed in other tests
+    let longLivedPaymentChannelTx;
     const skey =
       "dec072ad7e4cf54d8bce9ce5b0d7e95ce8473a35f6ce65ab414faea436a2ee86"; // private key
     web3.eth.accounts.wallet.add(`0x${skey}`);
@@ -24,6 +26,7 @@ contract(
         gas: 21000,
       });
       contractInstance = new web3.eth.Contract(LongLivedPaymentChannel.abi);
+
       const gas = await contractInstance
         .deploy({
           data: LongLivedPaymentChannel.bytecode,
@@ -32,7 +35,8 @@ contract(
           arguments: [recipient, closeDuration],
         })
         .estimateGas();
-      const longLivedPaymentChannelTx = await contractInstance
+      //deploying the contract
+      longLivedPaymentChannelTx = await contractInstance
         .deploy({
           data: LongLivedPaymentChannel.bytecode,
           arguments: [recipient, closeDuration],
@@ -43,29 +47,36 @@ contract(
           value: depositAmount,
         });
       contractAddress = longLivedPaymentChannelTx.options.address;
-      const actualSender = await longLivedPaymentChannelTx.methods.sender().call({
-        from: recipient,
-      });
-      const actualRecipient = await longLivedPaymentChannelTx.methods.recipient().call({
-        from:accounts[2]
-      });
-      const actualCloseDuration = await longLivedPaymentChannelTx.methods.closeDuration().call({
-        from:accounts[2]
-      })
+      const actualSender = await longLivedPaymentChannelTx.methods
+        .sender()
+        .call({
+          from: recipient,
+        });
+      const actualRecipient = await longLivedPaymentChannelTx.methods
+        .recipient()
+        .call({
+          from: accounts[2],
+        });
+      const actualCloseDuration = await longLivedPaymentChannelTx.methods
+        .closeDuration()
+        .call({
+          from: accounts[2],
+        });
       const actualDepositedAmount = await web3.eth.getBalance(contractAddress);
       // assertions
+      // console.log("Amount deposited", actualDepositedAmount);
       assert.equal(actualSender, sender, "Sender is not as expected");
       assert.equal(
         actualDepositedAmount,
         depositAmount,
         "The deposited amount is as expected"
       );
+      assert.equal(actualRecipient, recipient, "The recipient is as expected");
       assert.equal(
-        actualRecipient,
-        recipient,
-        "The recipient is as expected"
+        actualCloseDuration,
+        closeDuration,
+        "closeDuration is not as expected"
       );
-      assert.equal(actualCloseDuration,closeDuration,"closeDuration is not as expected")
     });
 
     it("the recipient should be able to withdraw from the channel", async () => {
@@ -73,6 +84,40 @@ contract(
       // code that will use this sign as well as recipient as caller of `withdraw` function
       // the recipient should be able to close the channel
       // make necessary assertions to validate balance of sender and recipient
+
+      const amnt = web3.utils.toWei("1", "ether");
+      const msg = web3.utils.soliditySha3(
+        { t: "address", v: contractAddress },
+        { t: "uint256", v: amnt }
+      );
+
+      const sig = await web3.eth.accounts.sign(msg, senderSkey);
+      const finalSgn = sig.signature;
+
+      const balanceBefore = await web3.eth.getBalance(recipient);
+
+      const withdrawTx = await longLivedPaymentChannelTx.methods
+        .withdraw(amnt, finalSgn)
+        .send({ from: recipient });
+
+      const balanceAfter = await web3.eth.getBalance(recipient);
+
+      const tx = await web3.eth.getTransaction(withdrawTx.transactionHash);
+
+      const transactionFee = web3.utils
+        .toBN(tx.gasPrice)
+        .mul(web3.utils.toBN(withdrawTx.gasUsed));
+
+      const calculatedBalance = web3.utils
+        .toBN(balanceBefore)
+        .add(web3.utils.toBN(amnt))
+        .sub(web3.utils.toBN(transactionFee));
+
+      assert.equal(
+        calculatedBalance,
+        balanceAfter,
+        "this is not expected balance"
+      );
     });
   }
 );
